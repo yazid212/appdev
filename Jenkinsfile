@@ -1,8 +1,12 @@
 pipeline {
     agent any
     
+    triggers {
+        githubPush()
+        pollSCM()
+    }
+    
     environment {
-        // Use your DockerHub username here
         DOCKER_HUB_REPO = "cryptpi/todo-app"
         DOCKER_HUB_CREDS = credentials('dockerhub-creds')
         IMAGE_TAG = "v${BUILD_NUMBER}"
@@ -11,27 +15,27 @@ pipeline {
     stages {
         stage('Clone Repository') {
             steps {
-                // Clean workspace before cloning
                 cleanWs()
-                
-                // Clone the repository with credentials
                 git branch: 'main', 
                     url: 'https://github.com/yazid212/appdev.git',
                     credentialsId: 'github-credentials'
-                
-                // Display information about the commit
                 sh 'git log -1'
             }
         }
         
-        stage('Run Unit Tests' ) {
+        stage('Run Unit Tests') {
             steps {
-                // Install all required Python packages with --user flag to avoid permission issues
-                sh 'python3 -m pip install --user flask==2.0.1'
-                sh 'python3 -m pip install --user pytest'
+                // Create virtual environment
+                sh 'python3 -m venv venv'
                 
-                // Then install from requirements.txt for any additional dependencies
-                sh 'python3 -m pip install --user -r requirements.txt'
+                // Activate virtual environment and install dependencies
+                sh '''
+                    . venv/bin/activate
+                    pip install --upgrade pip
+                    pip install flask==2.0.1
+                    pip install pytest
+                    pip install -r requirements.txt
+                '''
                 
                 // Create test directory if it doesn't exist
                 sh 'mkdir -p tests'
@@ -56,32 +60,35 @@ EOF
                 fi
                 '''
                 
-                // Run tests
-                sh 'python3 -m pytest tests/'
+                // Run tests with virtual environment
+                sh '''
+                    . venv/bin/activate
+                    python -m pytest tests/
+                '''
             }
         }
         
         stage('Build Docker Image') {
             steps {
                 // Build the Docker image with version tag and latest tag
-                sh "docker build -t ${DOCKER_HUB_REPO}:${IMAGE_TAG} -t ${DOCKER_HUB_REPO}:latest ."
+                sh "sudo docker build -t ${DOCKER_HUB_REPO}:${IMAGE_TAG} -t ${DOCKER_HUB_REPO}:latest ."
                 
                 // Display the built image
-                sh 'docker images'
+                sh 'sudo docker images'
             }
         }
         
         stage('Push to DockerHub') {
             steps {
                 // Login to DockerHub
-                sh "echo ${DOCKER_HUB_CREDS_PSW} | docker login -u ${DOCKER_HUB_CREDS_USR} --password-stdin"
+                sh "echo ${DOCKER_HUB_CREDS_PSW} | sudo docker login -u ${DOCKER_HUB_CREDS_USR} --password-stdin"
                 
                 // Push the Docker image
-                sh "docker push ${DOCKER_HUB_REPO}:${IMAGE_TAG}"
-                sh "docker push ${DOCKER_HUB_REPO}:latest"
+                sh "sudo docker push ${DOCKER_HUB_REPO}:${IMAGE_TAG}"
+                sh "sudo docker push ${DOCKER_HUB_REPO}:latest"
                 
                 // Logout from DockerHub
-                sh 'docker logout'
+                sh 'sudo docker logout'
             }
         }
         
@@ -187,8 +194,11 @@ EOF
         }
         always {
             // Clean up Docker images to save space
-            sh "docker rmi ${DOCKER_HUB_REPO}:${IMAGE_TAG} || true"
-            sh "docker rmi ${DOCKER_HUB_REPO}:latest || true"
+            sh "sudo docker rmi ${DOCKER_HUB_REPO}:${IMAGE_TAG} || true"
+            sh "sudo docker rmi ${DOCKER_HUB_REPO}:latest || true"
+            
+            // Clean up virtual environment
+            sh 'rm -rf venv || true'
         }
     }
 }
