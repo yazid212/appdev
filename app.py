@@ -1,12 +1,23 @@
 from flask import Flask, render_template, request, redirect, url_for
 import sqlite3
+import os
 
 app = Flask(__name__)
 
+# Configuration
+app.config['DATABASE'] = 'todo.db'
+
+def get_db_connection():
+    """Get database connection using the configured database path"""
+    db_path = app.config.get('DATABASE', 'todo.db')
+    return sqlite3.connect(db_path)
+
 def init_db():
-    conn = sqlite3.connect('todo.db')
+    """Initialize the database with the tasks table"""
+    conn = get_db_connection()
     c = conn.cursor()
-    c.execute("""CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY, title TEXT, description TEXT)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS tasks 
+                 (id INTEGER PRIMARY KEY, title TEXT, description TEXT)""")
     conn.commit()
     conn.close()
 
@@ -19,7 +30,7 @@ def add_task():
     if request.method == 'POST':
         title = request.form['title']
         description = request.form['description']
-        conn = sqlite3.connect('todo.db')
+        conn = get_db_connection()
         c = conn.cursor()
         c.execute("INSERT INTO tasks (title, description) VALUES (?, ?)", (title, description))
         conn.commit()
@@ -29,7 +40,7 @@ def add_task():
 
 @app.route('/tasks')
 def view_tasks():
-    conn = sqlite3.connect('todo.db')
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute("SELECT * FROM tasks")
     tasks = c.fetchall()
