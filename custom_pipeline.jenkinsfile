@@ -14,25 +14,25 @@ pipeline {
                 // Clean workspace before cloning
                 cleanWs()
                 
-                // Clone the repository - update URL to your actual repository
+                // Clone the repository
                 git branch: 'main', url: 'https://github.com/yazid212/appdev.git'
-                
+
                 // Display information about the commit
                 sh 'git log -1'
             }
         }
-        
-        stage('Run Unit Tests') {
+
+        stage('Run Unit Tests' ) {
             steps {
                 // Install dependencies
-                sh 'pip install -r requirements.txt'
-                
+                sh 'python3 -m pip install -r requirements.txt'
+
                 // Install pytest if not in requirements
-                sh 'pip install pytest'
-                
+                sh 'python3 -m pip install pytest'
+
                 // Create test directory if it doesn't exist
                 sh 'mkdir -p tests'
-                
+
                 // Create a basic test file if none exists
                 sh '''
                 if [ ! -f tests/test_app.py ]; then
@@ -52,9 +52,9 @@ def test_index_route(client):
 EOF
                 fi
                 '''
-                
+
                 // Run tests
-                sh 'python -m pytest tests/'
+                sh 'python3 -m pytest tests/'
             }
         }
         
