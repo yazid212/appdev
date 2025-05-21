@@ -22,21 +22,25 @@ pipeline {
             }
         }
 
-        stage('Run Unit Tests' ) {
-            steps {
-                // Install dependencies
-                sh 'python3 -m pip install -r requirements.txt'
-
-                // Install pytest if not in requirements
-                sh 'python3 -m pip install pytest'
-
-                // Create test directory if it doesn't exist
-                sh 'mkdir -p tests'
-
-                // Create a basic test file if none exists
-                sh '''
-                if [ ! -f tests/test_app.py ]; then
-                    cat > tests/test_app.py << 'EOF'
+stage('Run Unit Tests') {
+    steps {
+        // Install system packages if needed (requires Jenkins to have sudo privileges)
+        // sh 'sudo apt-get update && sudo apt-get install -y python3 python3-pip'
+        
+        // Install all required Python packages
+        sh 'python3 -m pip install --user flask==2.0.1'
+        sh 'python3 -m pip install --user pytest'
+        
+        // Then install from requirements.txt for any additional dependencies
+        sh 'python3 -m pip install --user -r requirements.txt'
+        
+        // Create test directory if it doesn't exist
+        sh 'mkdir -p tests'
+        
+        // Create a basic test file if none exists
+        sh '''
+        if [ ! -f tests/test_app.py ]; then
+            cat > tests/test_app.py << 'EOF'
 from app import app
 import pytest
 
@@ -50,13 +54,13 @@ def test_index_route(client):
     response = client.get('/')
     assert response.status_code == 200
 EOF
-                fi
-                '''
-
-                // Run tests
-                sh 'python3 -m pytest tests/'
-            }
-        }
+        fi
+        '''
+        
+        // Run tests
+        sh 'python3 -m pytest tests/'
+    }
+}
         
         stage('Build Docker Image') {
             steps {
