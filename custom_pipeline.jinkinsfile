@@ -1,0 +1,191 @@
+pipeline {
+    agent any
+    
+    environment {
+        // Use your DockerHub username here
+        DOCKER_HUB_REPO = "cryptpi/todo-app"
+        DOCKER_HUB_CREDS = credentials('dockerhub-creds')
+        IMAGE_TAG = "v${BUILD_NUMBER}"
+    }
+    
+    stages {
+        stage('Clone Repository') {
+            steps {
+                // Clean workspace before cloning
+                cleanWs()
+                
+                // Clone the repository - update URL to your actual repository
+                git branch: 'main', url: 'https://github.com/yazid212/appdev.git'
+                
+                // Display information about the commit
+                sh 'git log -1'
+            }
+        }
+        
+        stage('Run Unit Tests') {
+            steps {
+                // Install dependencies
+                sh 'pip install -r requirements.txt'
+                
+                // Install pytest if not in requirements
+                sh 'pip install pytest'
+                
+                // Create test directory if it doesn't exist
+                sh 'mkdir -p tests'
+                
+                // Create a basic test file if none exists
+                sh '''
+                if [ ! -f tests/test_app.py ]; then
+                    cat > tests/test_app.py << 'EOF'
+from app import app
+import pytest
+
+@pytest.fixture
+def client():
+    app.config['TESTING'] = True
+    with app.test_client() as client:
+        yield client
+
+def test_index_route(client):
+    response = client.get('/')
+    assert response.status_code == 200
+EOF
+                fi
+                '''
+                
+                // Run tests
+                sh 'python -m pytest tests/'
+            }
+        }
+        
+        stage('Build Docker Image') {
+            steps {
+                // Build the Docker image with version tag and latest tag
+                sh "docker build -t ${DOCKER_HUB_REPO}:${IMAGE_TAG} -t ${DOCKER_HUB_REPO}:latest ."
+                
+                // Display the built image
+                sh 'docker images'
+            }
+        }
+        
+        stage('Push to DockerHub') {
+            steps {
+                // Login to DockerHub
+                sh "echo ${DOCKER_HUB_CREDS_PSW} | docker login -u ${DOCKER_HUB_CREDS_USR} --password-stdin"
+                
+                // Push the Docker image
+                sh "docker push ${DOCKER_HUB_REPO}:${IMAGE_TAG}"
+                sh "docker push ${DOCKER_HUB_REPO}:latest"
+                
+                // Logout from DockerHub
+                sh 'docker logout'
+            }
+        }
+        
+        stage('Deploy to Kubernetes') {
+            steps {
+                // Create kubernetes directory if it doesn't exist
+                sh 'mkdir -p kubernetes'
+                
+                // Create deployment.yaml if it doesn't exist
+                sh '''
+                if [ ! -f kubernetes/deployment.yaml ]; then
+                    cat > kubernetes/deployment.yaml << 'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: todo-app-deployment
+  labels:
+    app: todo-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: todo-app
+  template:
+    metadata:
+      labels:
+        app: todo-app
+    spec:
+      containers:
+      - name: todo-app
+        image: ${DOCKER_HUB_REPO}:${IMAGE_TAG}
+        ports:
+        - containerPort: 5000
+        volumeMounts:
+        - name: todo-db-storage
+          mountPath: /app/data
+      volumes:
+      - name: todo-db-storage
+        persistentVolumeClaim:
+          claimName: todo-db-pvc
+EOF
+                fi
+                '''
+                
+                // Create service.yaml if it doesn't exist
+                sh '''
+                if [ ! -f kubernetes/service.yaml ]; then
+                    cat > kubernetes/service.yaml << 'EOF'
+apiVersion: v1
+kind: Service
+metadata:
+  name: todo-app-service
+spec:
+  selector:
+    app: todo-app
+  ports:
+  - port: 80
+    targetPort: 5000
+  type: NodePort
+EOF
+                fi
+                '''
+                
+                // Create PVC for database if it doesn't exist
+                sh '''
+                if [ ! -f kubernetes/pvc.yaml ]; then
+                    cat > kubernetes/pvc.yaml << 'EOF'
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: todo-db-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+EOF
+                fi
+                '''
+                
+                // Update deployment image with current build
+                sh "sed -i 's|\\${DOCKER_HUB_REPO}:\\${IMAGE_TAG}|${DOCKER_HUB_REPO}:${IMAGE_TAG}|g' kubernetes/deployment.yaml"
+                
+                // Apply Kubernetes manifests
+                sh 'kubectl apply -f kubernetes/pvc.yaml'
+                sh 'kubectl apply -f kubernetes/deployment.yaml'
+                sh 'kubectl apply -f kubernetes/service.yaml'
+                
+                // Verify deployment
+                sh 'kubectl get pods'
+                sh 'kubectl get services'
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo 'Pipeline completed successfully!'
+        }
+        failure {
+            echo 'Pipeline failed!'
+        }
+        always {
+            // Clean up Docker images to save space
+            sh "docker rmi ${DOCKER_HUB_REPO}:${IMAGE_TAG} || true"
+            sh "docker rmi ${DOCKER_HUB_REPO}:latest || true"
+        }
+    }
+}
