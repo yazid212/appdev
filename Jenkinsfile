@@ -71,24 +71,24 @@ EOF
         stage('Build Docker Image') {
             steps {
                 // Build the Docker image with version tag and latest tag
-                sh "sudo docker build -t ${DOCKER_HUB_REPO}:${IMAGE_TAG} -t ${DOCKER_HUB_REPO}:latest ."
+                sh "docker build -t ${DOCKER_HUB_REPO}:${IMAGE_TAG} -t ${DOCKER_HUB_REPO}:latest ."
                 
                 // Display the built image
-                sh 'sudo docker images'
+                sh 'docker images | grep ${DOCKER_HUB_REPO}'
             }
         }
         
         stage('Push to DockerHub') {
             steps {
                 // Login to DockerHub
-                sh "echo ${DOCKER_HUB_CREDS_PSW} | sudo docker login -u ${DOCKER_HUB_CREDS_USR} --password-stdin"
+                sh "echo ${DOCKER_HUB_CREDS_PSW} | docker login -u ${DOCKER_HUB_CREDS_USR} --password-stdin"
                 
                 // Push the Docker image
-                sh "sudo docker push ${DOCKER_HUB_REPO}:${IMAGE_TAG}"
-                sh "sudo docker push ${DOCKER_HUB_REPO}:latest"
+                sh "docker push ${DOCKER_HUB_REPO}:${IMAGE_TAG}"
+                sh "docker push ${DOCKER_HUB_REPO}:latest"
                 
                 // Logout from DockerHub
-                sh 'sudo docker logout'
+                sh 'docker logout'
             }
         }
         
@@ -119,7 +119,7 @@ spec:
     spec:
       containers:
       - name: todo-app
-        image: ${DOCKER_HUB_REPO}:${IMAGE_TAG}
+        image: PLACEHOLDER_IMAGE
         ports:
         - containerPort: 5000
         volumeMounts:
@@ -171,16 +171,19 @@ EOF
                 '''
                 
                 // Update deployment image with current build
-                sh "sed -i 's|\\${DOCKER_HUB_REPO}:\\${IMAGE_TAG}|${DOCKER_HUB_REPO}:${IMAGE_TAG}|g' kubernetes/deployment.yaml"
+                sh "sed -i 's|PLACEHOLDER_IMAGE|${DOCKER_HUB_REPO}:${IMAGE_TAG}|g' kubernetes/deployment.yaml"
                 
                 // Apply Kubernetes manifests
                 sh 'kubectl apply -f kubernetes/pvc.yaml'
-                sh 'kubectl apply -f kubernetes/deployment.yaml'
+                sh 'kubectl apply -f kubernetes/deployment.yaml' 
                 sh 'kubectl apply -f kubernetes/service.yaml'
                 
                 // Verify deployment
-                sh 'kubectl get pods'
-                sh 'kubectl get services'
+                sh 'kubectl get pods -l app=todo-app'
+                sh 'kubectl get services todo-app-service'
+                
+                // Wait for deployment to be ready
+                sh 'kubectl rollout status deployment/todo-app-deployment --timeout=300s'
             }
         }
     }
@@ -188,17 +191,44 @@ EOF
     post {
         success {
             echo 'Pipeline completed successfully!'
+            echo "Application deployed with image: ${DOCKER_HUB_REPO}:${IMAGE_TAG}"
+            
+            // Get service information
+            script {
+                try {
+                    def serviceInfo = sh(
+                        script: 'kubectl get service todo-app-service -o jsonpath="{.spec.ports[0].nodePort}"',
+                        returnStdout: true
+                    ).trim()
+                    echo "Application accessible on NodePort: ${serviceInfo}"
+                } catch (Exception e) {
+                    echo "Could not retrieve service port information"
+                }
+            }
         }
         failure {
             echo 'Pipeline failed!'
+            
+            // Debug information
+            echo 'Recent Docker images:'
+            sh 'docker images | head -10 || true'
+            
+            echo 'Kubernetes pod status:'
+            sh 'kubectl get pods -l app=todo-app || true'
+            
+            echo 'Kubernetes events:'
+            sh 'kubectl get events --sort-by=.metadata.creationTimestamp | tail -10 || true'
         }
         always {
             // Clean up Docker images to save space
-            sh "sudo docker rmi ${DOCKER_HUB_REPO}:${IMAGE_TAG} || true"
-            sh "sudo docker rmi ${DOCKER_HUB_REPO}:latest || true"
+            sh "docker rmi ${DOCKER_HUB_REPO}:${IMAGE_TAG} || true"
+            sh "docker rmi ${DOCKER_HUB_REPO}:latest || true"
             
             // Clean up virtual environment
             sh 'rm -rf venv || true'
+            
+            // Clean up dangling Docker images
+            sh 'docker image prune -f || true'
         }
     }
 }
