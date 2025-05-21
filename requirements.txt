@@ -24,4 +24,4 @@ python-dotenv==1.0.0
 gunicorn==21.2.0
 SQLAlchemy==2.0.23
 # SQLite support
-pysqlite3==0.5.2
+# pysqlite3==0.5.2
