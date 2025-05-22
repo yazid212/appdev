@@ -66,5 +66,5 @@ def toggle_todo(todo_id):
 
 if __name__ == '__main__':
     init_db()
-    # CRITICAL FIX: Bind to 0.0.0.0 to accept connections from outside container
+    # CRITICAL: Bind to 0.0.0.0 to accept external connections
     app.run(host='0.0.0.0', port=5000, debug=True)

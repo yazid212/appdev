@@ -1,6 +1,36 @@
 {% extends 'base.html' %}
 
 {% block content %}
-<h2>Welcome to the ToDo App!</h2>
-<p>Use the navigation links to manage your tasks.</p>
+<div class="container">
+    <h1>Todo List</h1>
+    
+    <!-- Add Todo Form -->
+    <form method="POST" action="{{ url_for('add_todo') }}" class="todo-form">
+        <input type="text" name="task" placeholder="Enter a new task..." required>
+        <button type="submit">Add Task</button>
+    </form>
+    
+    <!-- Todo List -->
+    <div class="todo-list">
+        {% if todos %}
+            {% for todo in todos %}
+            <div class="todo-item {% if todo.completed %}completed{% endif %}">
+                <span class="task">{{ todo.task }}</span>
+                <div class="actions">
+                    <form method="POST" action="{{ url_for('toggle_todo', todo_id=todo.id) }}" style="display: inline;">
+                        <button type="submit" class="toggle-btn">
+                            {% if todo.completed %}Undo{% else %}Complete{% endif %}
+                        </button>
+                    </form>
+                    <form method="POST" action="{{ url_for('delete_todo', todo_id=todo.id) }}" style="display: inline;">
+                        <button type="submit" class="delete-btn" onclick="return confirm('Are you sure?')">Delete</button>
+                    </form>
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <p class="empty-state">No tasks yet. Add one above!</p>
+        {% endif %}
+    </div>
+</div>
 {% endblock %}
