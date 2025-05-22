@@ -1,0 +1,14 @@
+# kubernetes/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: todo-app-service
+spec:
+  selector:
+    app: todo-app
+  type: NodePort
+  ports:
+    - port: 80
+      targetPort: 5000
+      # optional: pin this to a known port, or omit nodePort to have Kubernetes assign one
+      nodePort: 31885

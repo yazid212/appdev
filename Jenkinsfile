@@ -85,96 +85,100 @@ EOF
     }
 
     stage('Deploy to Kubernetes') {
-      steps {
-        withCredentials([file(credentialsId: 'kubeconfig-file', variable: 'KUBECONFIG')]) {
-          sh '''
-            kubectl config current-context
-            kubectl cluster-info
-            kubectl get nodes
-          '''
-          sh 'mkdir -p kubernetes'
-          sh '''
-            if [ ! -f kubernetes/deployment.yaml ]; then
-              cat > kubernetes/deployment.yaml << 'EOF'
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: todo-app-deployment
-  labels:
-    app: todo-app
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: todo-app
-  template:
-    metadata:
-      labels:
-        app: todo-app
-    spec:
-      containers:
-      - name: todo-app
-        image: PLACEHOLDER_IMAGE
-        ports:
-        - containerPort: 5000
-        volumeMounts:
-        - name: todo-db-storage
-          mountPath: /app/data
-      volumes:
-      - name: todo-db-storage
-        persistentVolumeClaim:
-          claimName: todo-db-pvc
-EOF
-            fi
-          '''
-          sh '''
-            if [ ! -f kubernetes/service.yaml ]; then
-              cat > kubernetes/service.yaml << 'EOF'
-apiVersion: v1
-kind: Service
-metadata:
-  name: todo-app-service
-spec:
-  selector:
-    app: todo-app
-  ports:
-  - port: 80
-    targetPort: 5000
-  type: NodePort
-EOF
-            fi
-          '''
-          sh '''
-            if [ ! -f kubernetes/pvc.yaml ]; then
-              cat > kubernetes/pvc.yaml << 'EOF'
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: todo-db-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 1Gi
-EOF
-            fi
-          '''
-          sh "sed -i 's|PLACEHOLDER_IMAGE|${DOCKER_HUB_REPO}:${IMAGE_TAG}|g' kubernetes/deployment.yaml"
-          sh '''
-            kubectl apply -f kubernetes/pvc.yaml
-            kubectl apply -f kubernetes/deployment.yaml
-            kubectl apply -f kubernetes/service.yaml
-          '''
-          sh '''
-            kubectl get pods -l app=todo-app
-            kubectl get svc todo-app-service
-            kubectl rollout status deployment/todo-app-deployment --timeout=300s
-          '''
-        }
-      }
+  steps {
+    withCredentials([file(credentialsId: 'kubeconfig-file', variable: 'KUBECONFIG')]) {
+      sh '''
+        # generate manifests if you haven’t already
+        mkdir -p kubernetes
+        cat > kubernetes/pvc.yaml << 'EOF'
+        apiVersion: v1
+        kind: PersistentVolumeClaim
+        metadata:
+          name: todo-db-pvc
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 1Gi
+        EOF
+
+        cat > kubernetes/deployment.yaml << 'EOF'
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: todo-app-deployment
+          labels:
+            app: todo-app
+        spec:
+          replicas: 2
+          selector:
+            matchLabels:
+              app: todo-app
+          template:
+            metadata:
+              labels:
+                app: todo-app
+            spec:
+              containers:
+              - name: todo-app
+                image: PLACEHOLDER_IMAGE
+                imagePullPolicy: IfNotPresent
+                env:
+                - name: DATABASE
+                  value: /app/data/todo.db
+                ports:
+                - containerPort: 5000
+                volumeMounts:
+                - name: todo-db-storage
+                  mountPath: /app/data
+                readinessProbe:
+                  httpGet:
+                    path: /
+                    port: 5000
+                  initialDelaySeconds: 5
+                  periodSeconds: 10
+                livenessProbe:
+                  httpGet:
+                    path: /
+                    port: 5000
+                  initialDelaySeconds: 15
+                  periodSeconds: 20
+              volumes:
+              - name: todo-db-storage
+                persistentVolumeClaim:
+                  claimName: todo-db-pvc
+        EOF
+
+        cat > kubernetes/service.yaml << 'EOF'
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: todo-app-service
+        spec:
+          selector:
+            app: todo-app
+          type: NodePort
+          ports:
+            - port: 80
+              targetPort: 5000
+              nodePort: 31885
+        EOF
+
+        # substitute in the newly‐built image tag
+        sed -i "s|PLACEHOLDER_IMAGE|${DOCKER_HUB_REPO}:${IMAGE_TAG}|g" kubernetes/deployment.yaml
+
+        # apply all three manifests
+        kubectl apply -f kubernetes/pvc.yaml
+        kubectl apply -f kubernetes/deployment.yaml
+        kubectl apply -f kubernetes/service.yaml
+
+        # wait for rollout
+        kubectl rollout status deployment/todo-app-deployment --timeout=300s
+      '''
     }
   }
+}
 
   post {
     success {
