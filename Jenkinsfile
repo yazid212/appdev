@@ -91,15 +91,26 @@ EOF
                 sh 'docker logout'
             }
         }
-        
+        stage('Setup Kubernetes Config') {
+            steps {
+                // Configure kubectl with your cluster credentials
+                withCredentials([file(credentialsId: 'kubeconfig-file', variable: 'KUBECONFIG')]) {
+                    sh 'kubectl config current-context'
+                    sh 'kubectl cluster-info'
+                }
+            }
+        }
+
         stage('Deploy to Kubernetes') {
             steps {
-                // Test Kubernetes connection (assumes kubectl is configured on Jenkins agent)
-                sh '''
-                    kubectl config current-context
-                    kubectl cluster-info
-                    kubectl get nodes
-                '''
+                withCredentials([file(credentialsId: 'kubeconfig-file', variable: 'KUBECONFIG')]) {
+                    // Test Kubernetes connection
+                    sh '''
+                        export KUBECONFIG=$KUBECONFIG
+                        kubectl config current-context
+                        kubectl cluster-info
+                        kubectl get nodes
+                    '''
                     
                     // Create kubernetes directory if it doesn't exist
                     sh 'mkdir -p kubernetes'
@@ -180,8 +191,9 @@ EOF
                     // Update deployment image with current build
                     sh "sed -i 's|PLACEHOLDER_IMAGE|${DOCKER_HUB_REPO}:${IMAGE_TAG}|g' kubernetes/deployment.yaml"
                     
-                    // Apply Kubernetes manifests
+                    // Apply Kubernetes manifests with proper KUBECONFIG
                     sh '''
+                        export KUBECONFIG=$KUBECONFIG
                         kubectl apply -f kubernetes/pvc.yaml
                         kubectl apply -f kubernetes/deployment.yaml
                         kubectl apply -f kubernetes/service.yaml
@@ -189,12 +201,14 @@ EOF
                     
                     // Verify deployment
                     sh '''
+                        export KUBECONFIG=$KUBECONFIG
                         kubectl get pods -l app=todo-app
                         kubectl get services todo-app-service
                     '''
                     
                     // Wait for deployment to be ready
                     sh '''
+                        export KUBECONFIG=$KUBECONFIG
                         kubectl rollout status deployment/todo-app-deployment --timeout=300s
                     '''
                 }
@@ -208,15 +222,20 @@ EOF
             echo "Application deployed with image: ${DOCKER_HUB_REPO}:${IMAGE_TAG}"
             
             // Get service information
-            script {
-                try {
-                    def serviceInfo = sh(
-                        script: 'kubectl get service todo-app-service -o jsonpath="{.spec.ports[0].nodePort}"',
-                        returnStdout: true
-                    ).trim()
-                    echo "Application accessible on NodePort: ${serviceInfo}"
-                } catch (Exception e) {
-                    echo "Could not retrieve service port information: ${e.getMessage()}"
+            withCredentials([file(credentialsId: 'kubeconfig-file', variable: 'KUBECONFIG')]) {
+                script {
+                    try {
+                        def serviceInfo = sh(
+                            script: '''
+                                export KUBECONFIG=$KUBECONFIG
+                                kubectl get service todo-app-service -o jsonpath="{.spec.ports[0].nodePort}"
+                            ''',
+                            returnStdout: true
+                        ).trim()
+                        echo "Application accessible on NodePort: ${serviceInfo}"
+                    } catch (Exception e) {
+                        echo "Could not retrieve service port information: ${e.getMessage()}"
+                    }
                 }
             }
         }
@@ -228,10 +247,20 @@ EOF
             sh 'docker images | head -10 || true'
             
             echo 'Kubernetes pod status:'
-            sh 'kubectl get pods -l app=todo-app || true'
+            withCredentials([file(credentialsId: 'kubeconfig-file', variable: 'KUBECONFIG')]) {
+                sh '''
+                    export KUBECONFIG=$KUBECONFIG
+                    kubectl get pods -l app=todo-app || true
+                '''
+            }
             
             echo 'Kubernetes events:'
-            sh 'kubectl get events --sort-by=.metadata.creationTimestamp | tail -10 || true'
+            withCredentials([file(credentialsId: 'kubeconfig-file', variable: 'KUBECONFIG')]) {
+                sh '''
+                    export KUBECONFIG=$KUBECONFIG
+                    kubectl get events --sort-by=.metadata.creationTimestamp | tail -10 || true
+                '''
+            }
         }
         always {
             // Clean up Docker images to save space
