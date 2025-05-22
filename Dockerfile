@@ -1,20 +1,22 @@
-FROM python:3.9-slim
+FROM python:3.12-slim
 
 WORKDIR /app
 
-# ensure volume mount point exists
-RUN mkdir -p /app/data
-
+# Copy requirements and install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy application code
 COPY . .
 
-# Tell SQLite where to write by default
-ENV DATABASE=/app/data/todo.db
+# Create data directory for database
+RUN mkdir -p /app/data
 
-# Expose the port
+# Expose port
 EXPOSE 5000
 
-# Use gunicorn in production, binding 0.0.0.0
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app"]
+# Set environment variable for database location
+ENV DATABASE=/app/data/todo.db
+
+# Run the application
+CMD ["python", "app.py"]
