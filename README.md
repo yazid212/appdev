@@ -12,7 +12,6 @@
 ## 🚀 Features
 ✅ **CRUD Operations**  
 ✔️ Add, view, complete, and delete tasks  
-✔️ Responsive UI (works on mobile/desktop)  
 ✔️ SQLite database with Flask backend  
 ✔️ Dockerized for easy deployment  
 ✔️ Kubernetes-ready with `k8s/` configs  
@@ -21,10 +20,10 @@
 ---
 
 ## 🛠️ Tech Stack
-| Category       | Technologies                          |
+| Category      | Technologies                      |
 |---------------|-----------------------------------|
 | **Backend**   | Python 3.12, Flask                |
-| **Frontend**  | HTML5, CSS3, JavaScript           |
+| **Frontend**  | HTML5, CSS3,                      |
 | **Database**  | SQLite                            |
 | **DevOps**    | Docker, Kubernetes, Jenkins       |
 
