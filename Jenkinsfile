@@ -19,7 +19,6 @@ pipeline {
         git branch: 'main',
             url: 'https://github.com/yazid212/appdev.git',
             credentialsId: 'github-credentials'
-        sh 'git log -1'
       }
     }
 
@@ -29,8 +28,7 @@ pipeline {
         sh '''
           . venv/bin/activate
           pip install --upgrade pip
-          pip install flask==2.0.1 pytest
-          pip install -r requirements.txt
+          pip install -r requirements.txt pytest flask==2.0.1
         '''
         sh 'mkdir -p tests'
         sh '''
@@ -46,21 +44,23 @@ def client():
         yield client
 
 def test_index_route(client):
-    response = client.get('/')
-    assert response.status_code == 200
+    r = client.get('/')
+    assert r.status_code == 200
 EOF
           fi
         '''
         sh '''
           . venv/bin/activate
-          python -m pytest tests/
+          pytest -q
         '''
       }
     }
 
     stage('Build Docker Image') {
       steps {
-        sh "docker build -t ${DOCKER_HUB_REPO}:${IMAGE_TAG} -t ${DOCKER_HUB_REPO}:latest ."
+        // Ensure /app/data exists inside the image
+        sh "docker build -t ${DOCKER_HUB_REPO}:${IMAGE_TAG} \\
+           --build-arg BUILDKIT_INLINE_CACHE=1 ."
         sh "docker images | grep ${DOCKER_HUB_REPO}"
       }
     }
@@ -78,9 +78,11 @@ EOF
       steps {
         withCredentials([file(credentialsId: 'kubeconfig-file', variable: 'KUBECONFIG')]) {
           sh '''
-            # 1) generate manifests under kubernetes/
+            set -e
+
             mkdir -p kubernetes
 
+            # PVC
             cat > kubernetes/pvc.yaml << 'EOF'
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -94,6 +96,7 @@ spec:
       storage: 1Gi
 EOF
 
+            # Deployment with proper volumeMount
             cat > kubernetes/deployment.yaml << 'EOF'
 apiVersion: apps/v1
 kind: Deployment
@@ -120,6 +123,9 @@ spec:
           value: /app/data/todo.db
         ports:
         - containerPort: 5000
+        volumeMounts:
+        - name: todo-db-storage
+          mountPath: /app/data
         readinessProbe:
           httpGet:
             path: /
@@ -138,6 +144,7 @@ spec:
           claimName: todo-db-pvc
 EOF
 
+            # Service
             cat > kubernetes/service.yaml << 'EOF'
 apiVersion: v1
 kind: Service
@@ -153,33 +160,35 @@ spec:
       nodePort: 31885
 EOF
 
-            # 2) replace placeholder with actual image
+            # Replace placeholder & apply
             sed -i "s|PLACEHOLDER_IMAGE|${DOCKER_HUB_REPO}:${IMAGE_TAG}|g" kubernetes/deployment.yaml
 
-            # 3) apply all manifests
             kubectl apply -f kubernetes/pvc.yaml
             kubectl apply -f kubernetes/deployment.yaml
             kubectl apply -f kubernetes/service.yaml
 
-            # 4) wait for rollout to succeed
+            # Wait for rollout
             kubectl rollout status deployment/todo-app-deployment --timeout=300s
           '''
         }
       }
     }
-  } // end stages
+  }
 
   post {
     success {
-      echo "✅ Pipeline completed successfully!"
+      echo "✅ Deployment succeeded: ${DOCKER_HUB_REPO}:${IMAGE_TAG}"
     }
     failure {
-      echo "❌ Pipeline failed!"
+      echo "❌ Deployment failed – dumping pod status and logs:"
+      sh 'kubectl get pods -l app=todo-app -o wide || true'
+      sh 'kubectl describe pods -l app=todo-app || true'
+      sh 'kubectl logs -l app=todo-app || true'
     }
     always {
+      echo "🧹 Cleaning up local artifacts…"
       sh 'docker image prune -f || true'
       sh 'rm -rf venv || true'
     }
   }
-
-} // end pipeline
+}
