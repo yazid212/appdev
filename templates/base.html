@@ -11,7 +11,10 @@
         <nav>
             <a href="{{ url_for('index') }}">Home</a>
             <a href="{{ url_for('index') }}">Add Task</a> |
-            <a href="{{ url_for('delete_todo') }}">Delete</a>
+            <form action="{{ url_for('delete_todo', todo_id=todo['id']) }}" method="post">
+                <button type="submit">Delete</button>
+            </form>
+            
 
         </nav>
     </header>
