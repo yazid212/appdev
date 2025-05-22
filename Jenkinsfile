@@ -61,7 +61,7 @@ EOF
     stage('Build Docker Image') {
       steps {
         sh "docker build -t ${DOCKER_HUB_REPO}:${IMAGE_TAG} -t ${DOCKER_HUB_REPO}:latest ."
-        sh 'docker images | grep ${DOCKER_HUB_REPO}'
+        sh "docker images | grep ${DOCKER_HUB_REPO}"
       }
     }
 
@@ -70,139 +70,116 @@ EOF
         sh "echo ${DOCKER_HUB_CREDS_PSW} | docker login -u ${DOCKER_HUB_CREDS_USR} --password-stdin"
         sh "docker push ${DOCKER_HUB_REPO}:${IMAGE_TAG}"
         sh "docker push ${DOCKER_HUB_REPO}:latest"
-        sh 'docker logout'
-      }
-    }
-
-    stage('Setup Kubernetes Config') {
-      steps {
-        // 'kubeconfig-file' is the Secret File you uploaded containing your Minikube kubeconfig
-        withCredentials([file(credentialsId: 'kubeconfig-file', variable: 'KUBECONFIG')]) {
-          sh 'kubectl config current-context'
-          sh 'kubectl cluster-info'
-        }
+        sh "docker logout"
       }
     }
 
     stage('Deploy to Kubernetes') {
-  steps {
-    withCredentials([file(credentialsId: 'kubeconfig-file', variable: 'KUBECONFIG')]) {
-      sh '''
-        # generate manifests if you haven’t already
-        mkdir -p kubernetes
-        cat > kubernetes/pvc.yaml << 'EOF'
-        apiVersion: v1
-        kind: PersistentVolumeClaim
-        metadata:
-          name: todo-db-pvc
-        spec:
-          accessModes:
-            - ReadWriteOnce
-          resources:
-            requests:
-              storage: 1Gi
-        EOF
+      steps {
+        withCredentials([file(credentialsId: 'kubeconfig-file', variable: 'KUBECONFIG')]) {
+          sh '''
+            # 1) generate manifests under kubernetes/
+            mkdir -p kubernetes
 
-        cat > kubernetes/deployment.yaml << 'EOF'
-        apiVersion: apps/v1
-        kind: Deployment
-        metadata:
-          name: todo-app-deployment
-          labels:
-            app: todo-app
-        spec:
-          replicas: 2
-          selector:
-            matchLabels:
-              app: todo-app
-          template:
-            metadata:
-              labels:
-                app: todo-app
-            spec:
-              containers:
-              - name: todo-app
-                image: PLACEHOLDER_IMAGE
-                imagePullPolicy: IfNotPresent
-                env:
-                - name: DATABASE
-                  value: /app/data/todo.db
-                ports:
-                - containerPort: 5000
-                volumeMounts:
-                - name: todo-db-storage
-                  mountPath: /app/data
-                readinessProbe:
-                  httpGet:
-                    path: /
-                    port: 5000
-                  initialDelaySeconds: 5
-                  periodSeconds: 10
-                livenessProbe:
-                  httpGet:
-                    path: /
-                    port: 5000
-                  initialDelaySeconds: 15
-                  periodSeconds: 20
-              volumes:
-              - name: todo-db-storage
-                persistentVolumeClaim:
-                  claimName: todo-db-pvc
-        EOF
+            cat > kubernetes/pvc.yaml << 'EOF'
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: todo-db-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+EOF
 
-        cat > kubernetes/service.yaml << 'EOF'
-        apiVersion: v1
-        kind: Service
-        metadata:
-          name: todo-app-service
-        spec:
-          selector:
-            app: todo-app
-          type: NodePort
-          ports:
-            - port: 80
-              targetPort: 5000
-              nodePort: 31885
-        EOF
+            cat > kubernetes/deployment.yaml << 'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: todo-app-deployment
+  labels:
+    app: todo-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: todo-app
+  template:
+    metadata:
+      labels:
+        app: todo-app
+    spec:
+      containers:
+      - name: todo-app
+        image: PLACEHOLDER_IMAGE
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: DATABASE
+          value: /app/data/todo.db
+        ports:
+        - containerPort: 5000
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 5000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 5000
+          initialDelaySeconds: 15
+          periodSeconds: 20
+      volumes:
+      - name: todo-db-storage
+        persistentVolumeClaim:
+          claimName: todo-db-pvc
+EOF
 
-        # substitute in the newly‐built image tag
-        sed -i "s|PLACEHOLDER_IMAGE|${DOCKER_HUB_REPO}:${IMAGE_TAG}|g" kubernetes/deployment.yaml
+            cat > kubernetes/service.yaml << 'EOF'
+apiVersion: v1
+kind: Service
+metadata:
+  name: todo-app-service
+spec:
+  selector:
+    app: todo-app
+  type: NodePort
+  ports:
+    - port: 80
+      targetPort: 5000
+      nodePort: 31885
+EOF
 
-        # apply all three manifests
-        kubectl apply -f kubernetes/pvc.yaml
-        kubectl apply -f kubernetes/deployment.yaml
-        kubectl apply -f kubernetes/service.yaml
+            # 2) replace placeholder with actual image
+            sed -i "s|PLACEHOLDER_IMAGE|${DOCKER_HUB_REPO}:${IMAGE_TAG}|g" kubernetes/deployment.yaml
 
-        # wait for rollout
-        kubectl rollout status deployment/todo-app-deployment --timeout=300s
-      '''
+            # 3) apply all manifests
+            kubectl apply -f kubernetes/pvc.yaml
+            kubectl apply -f kubernetes/deployment.yaml
+            kubectl apply -f kubernetes/service.yaml
+
+            # 4) wait for rollout to succeed
+            kubectl rollout status deployment/todo-app-deployment --timeout=300s
+          '''
+        }
+      }
     }
-  }
-}
+  } // end stages
 
   post {
     success {
-      echo 'Pipeline completed successfully!'
-      echo "Application deployed with image: ${DOCKER_HUB_REPO}:${IMAGE_TAG}"
-      script {
-        def port = sh(
-          script: 'kubectl get svc todo-app-service -o jsonpath="{.spec.ports[0].nodePort}"',
-          returnStdout: true
-        ).trim()
-        echo "Accessible on NodePort: ${port}"
-      }
+      echo "✅ Pipeline completed successfully!"
     }
     failure {
-      echo 'Pipeline failed!'
-      echo 'Recent Docker images:';        sh 'docker images | head -10 || true'
-      echo 'Kubernetes pod status:';       sh 'kubectl get pods -l app=todo-app || true'
-      echo 'Kubernetes events:';           sh 'kubectl get events --sort-by=.metadata.creationTimestamp | tail -10 || true'
+      echo "❌ Pipeline failed!"
     }
     always {
-      sh "docker rmi ${DOCKER_HUB_REPO}:${IMAGE_TAG} || true"
-      sh "docker rmi ${DOCKER_HUB_REPO}:latest    || true"
-      sh 'rm -rf venv || true'
       sh 'docker image prune -f || true'
+      sh 'rm -rf venv || true'
     }
   }
-}
+
+} // end pipeline
