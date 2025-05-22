@@ -19,6 +19,7 @@ pipeline {
         git branch: 'main',
             url: 'https://github.com/yazid212/appdev.git',
             credentialsId: 'github-credentials'
+        sh 'git log -1'
       }
     }
 
@@ -58,10 +59,14 @@ EOF
 
     stage('Build Docker Image') {
       steps {
-        // Ensure /app/data exists inside the image
-        sh "docker build -t ${DOCKER_HUB_REPO}:${IMAGE_TAG} \\
-           --build-arg BUILDKIT_INLINE_CACHE=1 ."
-        sh "docker images | grep ${DOCKER_HUB_REPO}"
+        // Use a multiline shell block to avoid backslash‐in‐double‐quotes errors
+        sh '''
+          docker build \
+            -t ${DOCKER_HUB_REPO}:${IMAGE_TAG} \
+            --build-arg BUILDKIT_INLINE_CACHE=1 \
+            .
+          docker images | grep ${DOCKER_HUB_REPO}
+        '''
       }
     }
 
@@ -70,7 +75,7 @@ EOF
         sh "echo ${DOCKER_HUB_CREDS_PSW} | docker login -u ${DOCKER_HUB_CREDS_USR} --password-stdin"
         sh "docker push ${DOCKER_HUB_REPO}:${IMAGE_TAG}"
         sh "docker push ${DOCKER_HUB_REPO}:latest"
-        sh "docker logout"
+        sh 'docker logout'
       }
     }
 
@@ -79,10 +84,8 @@ EOF
         withCredentials([file(credentialsId: 'kubeconfig-file', variable: 'KUBECONFIG')]) {
           sh '''
             set -e
-
             mkdir -p kubernetes
 
-            # PVC
             cat > kubernetes/pvc.yaml << 'EOF'
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -96,7 +99,6 @@ spec:
       storage: 1Gi
 EOF
 
-            # Deployment with proper volumeMount
             cat > kubernetes/deployment.yaml << 'EOF'
 apiVersion: apps/v1
 kind: Deployment
@@ -123,9 +125,6 @@ spec:
           value: /app/data/todo.db
         ports:
         - containerPort: 5000
-        volumeMounts:
-        - name: todo-db-storage
-          mountPath: /app/data
         readinessProbe:
           httpGet:
             path: /
@@ -144,7 +143,6 @@ spec:
           claimName: todo-db-pvc
 EOF
 
-            # Service
             cat > kubernetes/service.yaml << 'EOF'
 apiVersion: v1
 kind: Service
@@ -160,14 +158,12 @@ spec:
       nodePort: 31885
 EOF
 
-            # Replace placeholder & apply
             sed -i "s|PLACEHOLDER_IMAGE|${DOCKER_HUB_REPO}:${IMAGE_TAG}|g" kubernetes/deployment.yaml
 
             kubectl apply -f kubernetes/pvc.yaml
             kubectl apply -f kubernetes/deployment.yaml
             kubectl apply -f kubernetes/service.yaml
 
-            # Wait for rollout
             kubectl rollout status deployment/todo-app-deployment --timeout=300s
           '''
         }
@@ -180,13 +176,12 @@ EOF
       echo "✅ Deployment succeeded: ${DOCKER_HUB_REPO}:${IMAGE_TAG}"
     }
     failure {
-      echo "❌ Deployment failed – dumping pod status and logs:"
+      echo "❌ Deployment failed – dumping pod status & logs:"
       sh 'kubectl get pods -l app=todo-app -o wide || true'
       sh 'kubectl describe pods -l app=todo-app || true'
       sh 'kubectl logs -l app=todo-app || true'
     }
     always {
-      echo "🧹 Cleaning up local artifacts…"
       sh 'docker image prune -f || true'
       sh 'rm -rf venv || true'
     }
